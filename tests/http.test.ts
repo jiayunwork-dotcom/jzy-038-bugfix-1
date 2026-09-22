@@ -173,6 +173,86 @@ describe('批次生命周期', () => {
   });
 });
 
+describe('同批次并发写入', () => {
+  it.each([0, 1, 2])('第 %i 轮：所有成功受理的并发记录都必须取回，且序号连续', async (round) => {
+    const batch = await createBatch(`same-batch-concurrency-${round}`);
+    const requestCount = 12;
+
+    const payloads = Array.from({ length: requestCount }, (_, i) => {
+      const marker = `round-${round}-record-${i}`;
+      return i % 3 === 2
+        ? {
+            kind: 'fault' as const,
+            clientRequestId: marker,
+            z1: phasor(1, 80),
+            z2: phasor(1, 80),
+            z0: phasor(2, 75),
+            vf: phasor(1, i),
+            rf: 0.1,
+          }
+        : {
+            kind: 'transform' as const,
+            clientRequestId: marker,
+            quantity: i % 2 === 0 ? 'voltage' : 'current',
+            direction: 'phase->sequence' as const,
+            phases: balancedPositive(10 + i, i * 3),
+          };
+    });
+
+    const responses = await Promise.all(
+      payloads.map((payload) => app.inject({ method: 'POST', url: `/batches/${batch.id}/records`, payload })),
+    );
+
+    const accepted = responses.map((res) => res.json<StoredRecord>());
+    expect(responses.map((res) => res.statusCode)).toEqual(Array.from({ length: requestCount }, () => 201));
+    expect(accepted).toHaveLength(requestCount);
+    expect(new Set(accepted.map((record) => record.id)).size).toBe(requestCount);
+    expect(accepted.every((record) => record.status === 'ok')).toBe(true);
+
+    const listRes = await app.inject({ method: 'GET', url: `/batches/${batch.id}/records` });
+    expect(listRes.statusCode).toBe(200);
+    const stored = listRes.json<{ count: number; records: StoredRecord[] }>();
+    expect(stored.count).toBe(requestCount);
+    expect(stored.records).toHaveLength(requestCount);
+    expect(stored.records.map((record) => record.index).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: requestCount }, (_, i) => i),
+    );
+    expect(
+      stored.records.map((record) => (record.input as { clientRequestId: string }).clientRequestId).sort(),
+    ).toEqual(payloads.map((payload) => payload.clientRequestId).sort());
+    expect(new Set(stored.records.map((record) => record.id))).toEqual(new Set(accepted.map((record) => record.id)));
+
+    const health = await app.inject({ method: 'GET', url: '/health' });
+    expect(health.statusCode).toBe(200);
+  });
+
+  it('串行投递行为保持不变：逐条成功、索引连续、取回数量一致', async () => {
+    const batch = await createBatch('serial-unchanged');
+    const requestCount = 10;
+
+    for (let i = 0; i < requestCount; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/batches/${batch.id}/records`,
+        payload: {
+          kind: 'transform',
+          clientRequestId: `serial-${i}`,
+          quantity: 'voltage',
+          direction: 'phase->sequence',
+          phases: balancedPositive(20 + i, i * 2),
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json<StoredRecord>().index).toBe(i);
+    }
+
+    const listRes = await app.inject({ method: 'GET', url: `/batches/${batch.id}/records` });
+    const stored = listRes.json<{ count: number; records: StoredRecord[] }>();
+    expect(stored.count).toBe(requestCount);
+    expect(stored.records.map((record) => record.index)).toEqual(Array.from({ length: requestCount }, (_, i) => i));
+  });
+});
+
 describe('并发批次隔离', () => {
   it('并发开立多个批次并交错投递，结果不串号、不覆盖', async () => {
     const batches = await Promise.all([createBatch('c1'), createBatch('c2'), createBatch('c3'), createBatch('c4')]);
