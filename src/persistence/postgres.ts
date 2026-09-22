@@ -1,7 +1,7 @@
 /**
  * PostgreSQL 仓储：batches / records 两张表，JSONB 存输入、输出与错误。
- * 批次内记录序号在插入事务中按 count 生成，配合 UNIQUE(batch_id, idx)
- * 保证并发投递时不串号、不覆盖。
+ * 批次内记录序号在插入事务中对 batches 父行加行锁后生成，配合 UNIQUE(batch_id, idx)
+ * 保证同一批次的并发投递串行分配序号，不串号、不覆盖、不丢件。
  */
 
 import { randomUUID } from 'node:crypto';
@@ -70,6 +70,11 @@ export class PostgresBatchRepository implements BatchRepository {
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // 锁住批次父行：同一批次的并发追加在此串行化，避免多个事务同时读到相同 MAX(idx)。
+      const lockedBatch = await client.query('SELECT id FROM batches WHERE id = $1 FOR UPDATE', [batchId]);
+      if (lockedBatch.rowCount === 0) {
+        throw new Error(`batch ${batchId} not found`);
+      }
       const idxRes = await client.query<{ next_idx: number }>(
         'SELECT COALESCE(MAX(idx) + 1, 0) AS next_idx FROM records WHERE batch_id = $1',
         [batchId],

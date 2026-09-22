@@ -149,7 +149,7 @@ curl -s -X POST localhost:8080/batches/<BATCH_ID>/records \
 
 ```bash
 npm ci
-npm test          # vitest，51 个用例（内核 + 校验 + HTTP + 并发）
+npm test          # vitest，54 个用例（内核 + 校验 + HTTP + 同批次/跨批次并发）
 npm run build     # tsc -> dist/
 npm start         # 默认内存存储，:8080
 STORAGE=postgres DATABASE_URL=postgres://symcomp:symcomp@localhost:5432/symcomp npm start
@@ -165,7 +165,7 @@ STORAGE=postgres DATABASE_URL=postgres://symcomp:symcomp@localhost:5432/symcomp 
 - **线电压**：Vab/Vbc/Vca 零序为零、正序超前 30°、幅值 √3 倍；
 - **故障趋势**：序电流随 Rf 增大而减小、跌落同向减小；Z0 增大时序电流减小、跌落增大；Vf 升高时二者同向增大；
 - **非法输入**：幅值非正、缺相、角度 NaN/Infinity、阻抗实部非正、Rf 为负、线量带零序等全部结构化拒绝；
-- **并发隔离**：4 个批次并发各投 12 条，索引连续、不串号、不覆盖。
+- **并发写入**：同一批次多轮并发投递时，成功请求数与取回记录数、记录 ID 完全一致，索引连续、服务不报错；多个批次并发写入也不串号、不覆盖。
 
 ## 4. 容器部署（服务 + 存储一份配置拉起）
 

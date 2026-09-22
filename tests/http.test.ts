@@ -173,6 +173,72 @@ describe('批次生命周期', () => {
   });
 });
 
+describe('同批次并发写入', () => {
+  it('多轮并发投递同一批次：成功请求数、取回记录数和记录 ID 完全一致，索引连续且服务不报错', async () => {
+    const batch = await createBatch('same-batch concurrent writes');
+    const requestsPerRound = 10;
+    const rounds = 5;
+    const acceptedIds = new Set<string>();
+
+    function payload(round: number, offset: number) {
+      const sequence = round * requestsPerRound + offset;
+      if (sequence % 3 === 0) {
+        return {
+          kind: 'fault' as const,
+          z1: phasor(1, 80),
+          z2: phasor(1, 80),
+          z0: phasor(2, 75),
+          vf: phasor(1, sequence),
+          rf: 0.1,
+        };
+      }
+      return {
+        kind: 'transform' as const,
+        quantity: 'voltage' as const,
+        direction: 'phase->sequence' as const,
+        phases: balancedPositive(10 + sequence, sequence * 3),
+      };
+    }
+
+    for (let round = 0; round < rounds; round++) {
+      const responses = await Promise.all(
+        Array.from({ length: requestsPerRound }, (_, offset) =>
+          app.inject({
+            method: 'POST',
+            url: `/batches/${batch.id}/records`,
+            payload: payload(round, offset),
+          }),
+        ),
+      );
+
+      for (const response of responses) {
+        expect(response.statusCode, response.body).toBe(201);
+        expect(response.statusCode).toBeLessThan(500);
+        const record = response.json<StoredRecord>();
+        expect(record.status).toBe('ok');
+        expect(acceptedIds.has(record.id)).toBe(false);
+        acceptedIds.add(record.id);
+      }
+    }
+
+    const res = await app.inject({ method: 'GET', url: `/batches/${batch.id}/records` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json<{ count: number; records: StoredRecord[] }>();
+    expect(body.count).toBe(acceptedIds.size);
+    expect(body.records).toHaveLength(rounds * requestsPerRound);
+    expect(body.records.map((r) => r.index)).toEqual(Array.from({ length: acceptedIds.size }, (_, i) => i));
+
+    const retrievedIds = new Set(body.records.map((r) => r.id));
+    expect(retrievedIds.size).toBe(acceptedIds.size);
+    for (const id of acceptedIds) {
+      expect(retrievedIds.has(id)).toBe(true);
+    }
+
+    const health = await app.inject({ method: 'GET', url: '/health' });
+    expect(health.statusCode).toBe(200);
+  });
+});
+
 describe('并发批次隔离', () => {
   it('并发开立多个批次并交错投递，结果不串号、不覆盖', async () => {
     const batches = await Promise.all([createBatch('c1'), createBatch('c2'), createBatch('c3'), createBatch('c4')]);
