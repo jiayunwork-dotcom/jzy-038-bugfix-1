@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: symcomp
+      POSTGRES_PASSWORD: symcomp
+      POSTGRES_DB: symcomp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U symcomp -d symcomp']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - symcomp-net
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      STORAGE: postgres
+      PORT: '8080'
+      HOST: '0.0.0.0'
+      DATABASE_URL: postgres://symcomp:symcomp@db:5432/symcomp
+    ports:
+      - '8080:8080'
+    networks:
+      - symcomp-net
+
+volumes:
+  pgdata:
+
+networks:
+  symcomp-net:
+    driver: bridge

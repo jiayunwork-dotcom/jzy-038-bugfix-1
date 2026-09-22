@@ -1,0 +1,28 @@
+{
+  "name": "symcomp-service",
+  "version": "1.0.0",
+  "description": "Three-phase symmetrical components conversion and SLG fault calculation service",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "migrate": "tsx src/db/migrate.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
